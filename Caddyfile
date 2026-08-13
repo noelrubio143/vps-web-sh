@@ -1,1 +1,5 @@
-
+# Caddyfile for your domain (replace email if desired)
+noel1201.dpdns.org {
+    reverse_proxy web:3000
+    tls admin@noel1201.dpdns.org
+}
