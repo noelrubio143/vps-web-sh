@@ -1,1 +1,126 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Web SSH — Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/xterm/css/xterm.css" />
+  <style>
+    body { margin:0; font-family:Inter,system-ui,Arial;background:#0b1020;color:#e6eef6; height:100vh; display:flex; flex-direction:column;}
+    .top { padding:12px; display:flex; gap:12px; align-items:center; background:#07121a; }
+    .form { display:flex; gap:8px; align-items:center; }
+    input, textarea, select { padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:inherit; }
+    button { padding:8px 12px; border-radius:6px; border:none; background:#1f8b57; color:#062714; font-weight:600; cursor:pointer; }
+    #terminal { flex:1; padding:12px; }
+    .small { font-size:13px; color:#9aa6b2; }
+    label { font-size:13px; color:#9aa6b2; display:flex; flex-direction:column; gap:6px; }
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="form">
+      <label>Host
+        <input id="host" value="127.0.0.1" />
+      </label>
+      <label>Port
+        <input id="port" value="22" style="width:80px" />
+      </label>
+      <label>User
+        <input id="username" value="root" style="width:130px" />
+      </label>
+      <label>Password (or leave empty for key)
+        <input id="password" type="password" style="width:180px" />
+      </label>
+      <button id="connectBtn">Connect</button>
+      <button id="disconnectBtn" disabled>Disconnect</button>
+    </div>
+    <div style="margin-left:auto">
+      <span class="small">Security: use key auth and HTTPS in production</span>
+    </div>
+  </div>
 
+  <div id="terminal"></div>
+
+  <script src="https://unpkg.com/xterm/lib/xterm.js"></script>
+  <script>
+    const { Terminal } = window;
+    const term = new Terminal({ cursorBlink: true });
+    term.open(document.getElementById('terminal'));
+    term.focus();
+
+    let ws = null;
+    let connected = false;
+
+    function wsSend(obj){
+      if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+    }
+
+    document.getElementById('connectBtn').addEventListener('click', () => {
+      const host = document.getElementById('host').value.trim();
+      const port = parseInt(document.getElementById('port').value || '22', 10);
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if(!host || !username) { alert('Enter host and username'); return; }
+
+      const protocol = (location.protocol === 'https:') ? 'wss' : 'ws';
+      const wsUrl = protocol + '://' + location.host + '/ssh';
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        const cols = term.cols || 80;
+        const rows = term.rows || 24;
+        wsSend({ action: 'connect', host, port, username, password: password || undefined, cols, rows, term: 'xterm-color' });
+        connected = true;
+        document.getElementById('connectBtn').disabled = true;
+        document.getElementById('disconnectBtn').disabled = false;
+        term.write('\r\nConnecting...\r\n');
+      };
+
+      ws.onmessage = (ev) => {
+        let payload = {};
+        try { payload = JSON.parse(ev.data); } catch (e) { return; }
+
+        if(payload.type === 'data') {
+          term.write(payload.data);
+        } else if(payload.type === 'ready') {
+          term.write('\r\n*** SSH shell ready ***\r\n');
+        } else if(payload.type === 'error') {
+          term.write('\r\n[ERROR] ' + payload.message + '\r\n');
+        } else if(payload.type === 'exit') {
+          term.write('\r\n*** SSH session closed ***\r\n');
+          ws.close();
+        }
+      };
+
+      ws.onclose = () => {
+        connected = false;
+        document.getElementById('connectBtn').disabled = false;
+        document.getElementById('disconnectBtn').disabled = true;
+        term.write('\r\nDisconnected from server\r\n');
+      };
+
+      ws.onerror = (e) => {
+        term.write('\r\nWebSocket error\r\n');
+      };
+
+      term.onData((d) => {
+        if(ws && ws.readyState === WebSocket.OPEN) {
+          wsSend({ action: 'input', data: d });
+        }
+      });
+
+      // resize handling
+      window.addEventListener('resize', () => {
+        if(ws && ws.readyState === WebSocket.OPEN) {
+          wsSend({ action: 'resize', cols: term.cols, rows: term.rows });
+        }
+      });
+    });
+
+    document.getElementById('disconnectBtn').addEventListener('click', () => {
+      if(ws) ws.close();
+    });
+  </script>
+</body>
+</html>
